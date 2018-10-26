@@ -65,7 +65,7 @@ def log_removal(subm, entry):
     Link to post removed: {}
     '''
 
-    last_post_date = datetime.fromtimestamp(float(entry[1]))
+    last_post_date = datetime.utcfromtimestamp(float(entry[1]))
     last_post_id = entry[2]
 
     logging.info(log_msg.format(str(subm.author), datetime.utcnow().strftime('%c'),
@@ -79,15 +79,15 @@ def log_removal(subm, entry):
 def comment_removal(submission, entry):
     # adds the post limit to their last post date and subtracts the current time
     # to get the current amount of days until they can post again
-    last_post = datetime.fromtimestamp(float(entry[1]))
-    days_left = ((last_post + timedelta(days=POST_LIMIT)) - datetime.utcnow()).days
+    last_post = datetime.utcfromtimestamp(float(entry[1]))
+    days_left = ((last_post + timedelta(days=POST_LIMIT)).date() - datetime.utcnow().date()).days
 
     print('Adding commment...')
     submission.reply(COMMENT.format(post_limit=POST_LIMIT, days_left=days_left,
                                     subm_id=entry[2]))
 
 
-def check_if_author_already_posted(author, submission, cur, reddit):
+def check_if_author_already_posted(author, submission, cur):
     print('Checking if author has posted in the last {} days...'.format(POST_LIMIT))
     subm_id = submission.id
     # fetch the author from the database
@@ -102,18 +102,14 @@ def check_if_author_already_posted(author, submission, cur, reddit):
         if entry[2] == subm_id:
             return False
 
-        # if mod override, return True and keep post
-        if check_if_mod_override(reddit, submission):
-            return False
-
         # create a datetime object from the epoch timestamp of submission
-        last_posted = datetime.fromtimestamp(float(entry[1]))
-        # if their last post plus the post limit is greater than the current time
+        last_posted = datetime.utcfromtimestamp(float(entry[1]))
+        # if current post time, is less than last_post plus the post limit
         # that means they have posted within the post limit.
 
         #debug
-        print((last_posted + timedelta(days=POST_LIMIT)).date(), ">", datetime.utcnow().date())
-        if (last_posted + timedelta(days=POST_LIMIT)).date() > datetime.utcnow().date():
+        print(datetime.utcnow().date(), "<", (last_posted + timedelta(days=POST_LIMIT)).date())
+        if datetime.utcnow().date() < (last_posted + timedelta(days=POST_LIMIT)).date():
             return True
         else:  # has posted but last post is older than the limit
             return False
@@ -123,11 +119,9 @@ def check_if_mod_override(reddit, submission):
     # get all mods
     mods = list(reddit.subreddit(SUBREDDIT_NAME).moderator())
 
-    # get all comments
-    all_comments = submission.comments.list()
-
-    for comment in all_comments:
-        print(comment)
+    # get all comments. Resolves all commentsMore instances
+    submission.comments.replace_more(limit=None)
+    for comment in submission.comments:
         if comment.body.lower() == OVERRIDE_KEYWORD.lower() and comment.author in mods:
             return True
 
@@ -146,7 +140,7 @@ def remove_submission(submission, cur, r):
     if not entry:
         print('ERROR: {} was flagged for removal but couldn\'t find it in db.')
         logging.error('ERROR: {} was flagged for removal but could not find\
-                       last post in db. Mods will be messaged.'.format(subm.permalink))
+                       last post in db. Mods will be messaged.'.format(submission.permalink))
         msg_mods(submission, r)
         return  # exit the function instead of removing the post
 
@@ -178,10 +172,14 @@ def find_posts(reddit, sql, cur):
         if ONLY_LINKS and submission.is_self:
             continue
         # Check if the post itself is older than the post limit, if so we can ignore it. Only checking Dates, not time
-        if (datetime.fromtimestamp(submission.created) + timedelta(days=POST_LIMIT)).date() < datetime.utcnow().date():
+        if (datetime.utcfromtimestamp(submission.created_utc) + timedelta(days=POST_LIMIT)).date() < datetime.utcnow().date():
+            continue
+        # Check if mod have overridden it
+        if check_if_mod_override(reddit, submission):
+            print("Mod override detected")
             continue
         # Then we will check if the author has already posted in the past 5 days
-        if check_if_author_already_posted(str(submission.author), submission, cur, reddit):
+        if check_if_author_already_posted(str(submission.author), submission, cur):
             remove_submission(submission, cur, reddit)  # if they have we will remove the post
         # If there is no record of the author posting, or it's been more than 30 days
         # we will create an entry for the author or update an authors entry
