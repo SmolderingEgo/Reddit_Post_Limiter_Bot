@@ -108,8 +108,8 @@ def check_if_author_already_posted(author, submission, cur):
         # that means they have posted within the post limit.
 
         #debug
-        print(datetime.utcnow().date(), "<", (last_posted + timedelta(days=POST_LIMIT)).date())
-        if datetime.utcnow().date() < (last_posted + timedelta(days=POST_LIMIT)).date():
+        print((last_posted + timedelta(days=POST_LIMIT)).date(), ">", datetime.utcnow().date())
+        if (last_posted + timedelta(days=POST_LIMIT)).date() > datetime.utcnow().date():
             return True
         else:  # has posted but last post is older than the limit
             return False
@@ -172,7 +172,7 @@ def find_posts(reddit, sql, cur):
         if ONLY_LINKS and submission.is_self:
             continue
         # Check if the post itself is older than the post limit, if so we can ignore it. Only checking Dates, not time
-        if (datetime.utcfromtimestamp(submission.created_utc) + timedelta(days=POST_LIMIT)).date() < datetime.utcnow().date():
+        if (datetime.utcfromtimestamp(submission.created_utc) + timedelta(days=POST_LIMIT)).date() <= datetime.utcnow().date():
             continue
         # Check if mod have overridden it
         if check_if_mod_override(reddit, submission):
