@@ -17,13 +17,13 @@ logging.basicConfig(filename='postlimit.log',
 # User config
 # --------------------------------------------------------------------
 # Don't include the /r/
-SUBREDDIT_NAME = 'BravenewbiesBeta'
+SUBREDDIT_NAME = 'wowguilds'
 
 # Set to false if you want it to enforce all posts
 ONLY_LINKS = False
 
 # Set this to the number of days between posts
-POST_LIMIT = 1
+POST_LIMIT = 5
 OVERRIDE_KEYWORD = "override"
 # Comment that will be added to post before removal
 # Note: If you change this comment the {variable}'s must remain as is.
