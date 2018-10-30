@@ -1,7 +1,7 @@
 [DEFAULT]
 # Oauth stuff
-client_id = -212jv9V8iviZw
-client_secret = S306PW4Vb5PhZ_9SaRQs7Za03qE
+client_id =
+client_secret = 
 username = 
 password =
 refresh_token =
