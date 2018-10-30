@@ -17,13 +17,13 @@ logging.basicConfig(filename='postlimit.log',
 # User config
 # --------------------------------------------------------------------
 # Don't include the /r/
-SUBREDDIT_NAME = 'wowguilds'
+SUBREDDIT_NAME = 'BravenewbiesBeta'
 
 # Set to false if you want it to enforce all posts
 ONLY_LINKS = False
 
 # Set this to the number of days between posts
-POST_LIMIT = 5 #
+POST_LIMIT = 1
 OVERRIDE_KEYWORD = "override"
 # Comment that will be added to post before removal
 # Note: If you change this comment the {variable}'s must remain as is.
@@ -37,7 +37,7 @@ From The Recruitment_Bot-
 You have already posted in the past {post_limit} days, therefore your post
 has been removed as it has broken the rules.
 
-You have *{days_left}* days until you can post again.
+You have *{time_left}* {time_left_unit} until you can post again.
 
 Your last post is [here](https://www.reddit.com/comments/{subm_id}/).
 
@@ -80,11 +80,25 @@ def comment_removal(submission, entry):
     # adds the post limit to their last post date and subtracts the current time
     # to get the current amount of days until they can post again
     last_post = datetime.utcfromtimestamp(float(entry[1]))
-    days_left = ((last_post + timedelta(days=POST_LIMIT)).date() - datetime.utcnow().date()).days
+    time_left = ((last_post + timedelta(days=POST_LIMIT)).date() - datetime.utcnow().date()).days
+    time_left_unit = "days"
+
+    # if time_left is 1 day, give the hours instead
+    if time_left == 1:
+        # return hours left to utc midnight
+        tomorrow = datetime.utcnow() + timedelta(1)
+        midnight = datetime(year=tomorrow.year, month=tomorrow.month,
+                            day=tomorrow.day, hour=0, minute=0, second=0)
+        # save timedelta to timedate object for proper formatting
+        time_left = datetime.utcfromtimestamp((midnight - datetime.utcnow()).seconds)
+        time_left = time_left.strftime('%H:%M')
+
+        # set unit
+        time_left_unit = "hours"
 
     print('Adding commment...')
-    submission.reply(COMMENT.format(post_limit=POST_LIMIT, days_left=days_left,
-                                    subm_id=entry[2]))
+    submission.reply(COMMENT.format(post_limit=POST_LIMIT, time_left=time_left, time_left_unit=time_left_unit,
+                                        subm_id=entry[2]))
 
 
 def check_if_author_already_posted(author, submission, cur):
