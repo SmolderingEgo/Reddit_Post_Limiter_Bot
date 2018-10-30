@@ -17,13 +17,13 @@ logging.basicConfig(filename='postlimit.log',
 # User config
 # --------------------------------------------------------------------
 # Don't include the /r/
-SUBREDDIT_NAME = 'BravenewbiesBeta'
+SUBREDDIT_NAME = 'wowguilds'
 
 # Set to false if you want it to enforce all posts
 ONLY_LINKS = False
 
 # Set this to the number of days between posts
-POST_LIMIT = 1 # TODO
+POST_LIMIT = 5 #
 OVERRIDE_KEYWORD = "override"
 # Comment that will be added to post before removal
 # Note: If you change this comment the {variable}'s must remain as is.
@@ -108,7 +108,7 @@ def check_if_author_already_posted(author, submission, cur):
         # that means they have posted within the post limit.
 
         #debug
-        print((last_posted + timedelta(days=POST_LIMIT)).date(), ">", datetime.utcnow().date())
+        # print((last_posted + timedelta(days=POST_LIMIT)).date(), ">", datetime.utcnow().date())
         if (last_posted + timedelta(days=POST_LIMIT)).date() > datetime.utcnow().date():
             return True
         else:  # has posted but last post is older than the limit
@@ -146,7 +146,7 @@ def remove_submission(submission, cur, r):
 
     log_removal(submission, entry)  # log the event
     comment_removal(submission, entry)  # comment on the post to notify op of the removal
-    submission.delete()  # then remove the post
+    submission.mod.remove()  # then remove the post
 
 
 def add_or_update_author(sql, cur, name, date, subm_id):
