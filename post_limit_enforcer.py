@@ -6,7 +6,6 @@ import inspect
 import os.path  # this is for just checking for a db file
 import sqlite3
 import logging
-import OAuth2Util
 from datetime import datetime, timedelta
 
 # configure the logger
@@ -25,7 +24,7 @@ ONLY_LINKS = False
 
 # Set this to the number of days between posts
 POST_LIMIT = 5
-
+OVERRIDE_KEYWORD = "override"
 # Comment that will be added to post before removal
 # Note: If you change this comment the {variable}'s must remain as is.
 # You can put them wherever you like but you cannot delete them or 
@@ -38,7 +37,7 @@ From The Recruitment_Bot-
 You have already posted in the past {post_limit} days, therefore your post
 has been removed as it has broken the rules.
 
-You have *{days_left}* days until you can post again.
+You have *{time_left}* {time_left_unit} until you can post again.
 
 Your last post is [here](https://www.reddit.com/comments/{subm_id}/).
 
@@ -66,57 +65,88 @@ def log_removal(subm, entry):
     Link to post removed: {}
     '''
 
-    last_post_date = datetime.fromtimestamp(float(entry[1]))
+    last_post_date = datetime.utcfromtimestamp(float(entry[1]))
     last_post_id = entry[2]
 
-    logging.info(log_msg.format(str(subm.author), datetime.now().strftime('%c'),
+    logging.info(log_msg.format(str(subm.author), datetime.utcnow().strftime('%c'),
                                 last_post_date.strftime('%c'),
-                                (datetime.now() - last_post_date).days,
+                                (datetime.utcnow() - last_post_date).days,
                                 last_post_id, subm.permalink))
 
     return True
 
 
-def comment_removal(subm, entry):
+def comment_removal(submission, entry):
     # adds the post limit to their last post date and subtracts the current time
     # to get the current amount of days until they can post again
-    last_post = datetime.fromtimestamp(float(entry[1]))
-    days_left = ((last_post + timedelta(days=POST_LIMIT)) - datetime.now()).days
+    last_post = datetime.utcfromtimestamp(float(entry[1]))
+    time_left = ((last_post + timedelta(days=POST_LIMIT)).date() - datetime.utcnow().date()).days
+    time_left_unit = "days"
+
+    # if time_left is 1 day, give the hours instead
+    if time_left == 1:
+        # return hours left to utc midnight
+        tomorrow = datetime.utcnow() + timedelta(1)
+        midnight = datetime(year=tomorrow.year, month=tomorrow.month,
+                            day=tomorrow.day, hour=0, minute=0, second=0)
+        # save timedelta to timedate object for proper formatting
+        time_left = datetime.utcfromtimestamp((midnight - datetime.utcnow()).seconds)
+        time_left = time_left.strftime('%H:%M')
+
+        # set unit
+        time_left_unit = "hours"
 
     print('Adding commment...')
-    subm.add_comment(COMMENT.format(post_limit=POST_LIMIT, days_left=days_left,
-                                    subm_id=entry[2]))
+    submission.reply(COMMENT.format(post_limit=POST_LIMIT, time_left=time_left, time_left_unit=time_left_unit,
+                                        subm_id=entry[2]))
 
 
-def check_if_author_already_posted(author, subm_id, cur):
+def check_if_author_already_posted(author, submission, cur):
     print('Checking if author has posted in the last {} days...'.format(POST_LIMIT))
-
+    subm_id = submission.id
     # fetch the author from the database
     cur.execute('SELECT * FROM authors WHERE name = ?', [author])
     entry = cur.fetchone()
 
     # if we couldn't get an entry then that have never posted, return false
-    if entry == None:
+    if entry is None:
         return False
     else:
         # if the current submission is the one we already have stored ignore it
         if entry[2] == subm_id:
             return False
+
         # create a datetime object from the epoch timestamp of submission
-        last_posted = datetime.fromtimestamp(float(entry[1]))
-        # if their last post plus the post limit is greater than the current time
+        last_posted = datetime.utcfromtimestamp(float(entry[1]))
+        # if current post time, is less than last_post plus the post limit
         # that means they have posted within the post limit.
-        if last_posted + timedelta(days=POST_LIMIT) > datetime.now():
+
+        #debug
+        # print((last_posted + timedelta(days=POST_LIMIT)).date(), ">", datetime.utcnow().date())
+        if (last_posted + timedelta(days=POST_LIMIT)).date() > datetime.utcnow().date():
             return True
         else:  # has posted but last post is older than the limit
             return False
 
 
-def remove_submission(subm, cur, r):
+def check_if_mod_override(reddit, submission):
+    # get all mods
+    mods = list(reddit.subreddit(SUBREDDIT_NAME).moderator())
+
+    # get all comments. Resolves all commentsMore instances
+    submission.comments.replace_more(limit=None)
+    for comment in submission.comments:
+        if comment.body.lower() == OVERRIDE_KEYWORD.lower() and comment.author in mods:
+            return True
+
+    return False
+
+
+def remove_submission(submission, cur, r):
     print('Removing post...')
 
     # grab the most recent post stored in the db of the op of the submission
-    cur.execute('SELECT * FROM authors WHERE name = ?', [str(subm.author)])
+    cur.execute('SELECT * FROM authors WHERE name = ?', [str(submission.author)])
     entry = cur.fetchone()
 
     # if an entry could not be grabbed from the db, but the post was flagged
@@ -124,13 +154,13 @@ def remove_submission(subm, cur, r):
     if not entry:
         print('ERROR: {} was flagged for removal but couldn\'t find it in db.')
         logging.error('ERROR: {} was flagged for removal but could not find\
-                       last post in db. Mods will be messaged.'.format(subm.permalink))
-        msg_mods(subm, r)
+                       last post in db. Mods will be messaged.'.format(submission.permalink))
+        msg_mods(submission, r)
         return  # exit the function instead of removing the post
 
-    log_removal(subm, entry)  # log the event
-    comment_removal(subm, entry)  # comment on the post to notify op of the removal
-    subm.remove()  # then remove the post
+    log_removal(submission, entry)  # log the event
+    comment_removal(submission, entry)  # comment on the post to notify op of the removal
+    submission.mod.remove()  # then remove the post
 
 
 def add_or_update_author(sql, cur, name, date, subm_id):
@@ -143,25 +173,32 @@ def add_or_update_author(sql, cur, name, date, subm_id):
     else:  # if not just create it
         cur.execute('INSERT INTO authors VALUES(?, ?, ?)', [name, date, subm_id])
     sql.commit()
+    print("Database updated")
 
 
-def find_posts(r, o, sql, cur):
+def find_posts(reddit, sql, cur):
     print('Searching posts...')
-    submission_stream = praw.helpers.submission_stream(r, SUBREDDIT_NAME)
-    for subm in submission_stream:
+    subreddit = reddit.subreddit(SUBREDDIT_NAME)
+
+    # stream though all new submissions
+    for submission in subreddit.stream.submissions():
         # Check if only links is True, and if the post is text just ignore it
-        if ONLY_LINKS and subm.is_self:
+        if ONLY_LINKS and submission.is_self:
             continue
-        # Check if the post itself is older than the post limit, if so we can ignore it
-        if datetime.fromtimestamp(subm.created) + timedelta(days=POST_LIMIT) < datetime.now():
+        # Check if the post itself is older than the post limit, if so we can ignore it. Only checking Dates, not time
+        if (datetime.utcfromtimestamp(submission.created_utc) + timedelta(days=POST_LIMIT)).date() <= datetime.utcnow().date():
             continue
-        # Then we will check if the author has already posted in the past 30 days
-        if check_if_author_already_posted(str(subm.author), subm.id, cur):
-            remove_submission(subm, cur, r)  # if they have we will remove the post
+        # Check if mod have overridden it
+        if check_if_mod_override(reddit, submission):
+            print("Mod override detected")
+            continue
+        # Then we will check if the author has already posted in the past 5 days
+        if check_if_author_already_posted(str(submission.author), submission, cur):
+            remove_submission(submission, cur, reddit)  # if they have we will remove the post
         # If there is no record of the author posting, or it's been more than 30 days
         # we will create an entry for the author or update an authors entry
         else:
-            add_or_update_author(sql, cur, str(subm.author), str(subm.created), subm.id)
+            add_or_update_author(sql, cur, str(submission.author), str(submission.created_utc), submission.id)
 
 
 def format_var_str(dic):
@@ -173,16 +210,11 @@ def format_var_str(dic):
 
 
 def main():
-    r = praw.Reddit(user_agent='Post_Limit_Enforcer v1.5 /u/cutety')
-    o = OAuth2Util.OAuth2Util(r)  # OAuth authorization
-    o.refresh(force=True)  # force automatic token refresh
+    reddit = praw.Reddit(user_agent='Post_Limit_Enforcer v1.5 /u/cutety')
 
     # Setup/Load the database
     # First we have to check for old database file name
-    if os.path.isfile('30daylimit.db'):
-        sql = sqlite3.connect('30daylimit.db')  # old version name
-    else:
-        sql = sqlite3.connect('PostLimitEnforcer.db')  # new version name
+    sql = sqlite3.connect('PostLimitEnforcer.db')  # new version name
 
     cur = sql.cursor()
     cur.execute('CREATE TABLE IF NOT EXISTS authors(name TEXT, last_post TEXT, subm_id TEXT)')
@@ -192,7 +224,7 @@ def main():
     # Main loop
     while True:
         try:
-            find_posts(r, o, sql, cur)
+            find_posts(reddit, sql, cur)
         except Exception as e:
             print('ERROR: {}'.format(e))
 
